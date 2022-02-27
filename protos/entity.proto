@@ -1,0 +1,10 @@
+package samples;
+
+message Entity {
+    message PK {
+        optional uint32 id = 1;
+    }
+    optional PK key = 2;
+    optional string name = 3;
+    optional uint32 score = 4;
+}

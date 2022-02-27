@@ -1,0 +1,44 @@
+logger:
+  level: INFO
+  format: classic
+  add_timestamp: true
+  static_fields: {}
+
+metrics:
+  http_server:
+    prefix: ""
+
+input_resources:
+  - label: kafka_input
+    kafka:
+      addresses: ["${KAFKA}"]
+      topics: ["${TOPIC}"]
+      consumer_group: "${GROUP}"
+    processors:
+      - protobuf_deserializer:
+          protodir: ./protos
+          protofile: entity.proto
+          valueMessage: Entity
+          keyMessage: PK
+
+output_resources:
+  - label: stdout
+    stdout:
+      codec: lines
+
+input:
+  broker:
+    copies: 1
+    inputs:
+      - resource: kafka_input
+
+pipeline:
+  threads: 1
+  processors:
+  - sink_formatter: {}
+
+output:
+  broker:
+    pattern: fan_out
+    outputs:
+      - resource: stdout
