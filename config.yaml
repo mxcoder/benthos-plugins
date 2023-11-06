@@ -24,13 +24,13 @@ output_resources:
       codec: lines
   - label: bqwrite
     bqwrite:
-      project: "$BQ_PROJECT"
-      dataset: "$BQ_DATASET"
-      table: "$BQ_TABLE"
+      project: "${BQ_PROJECT}"
+      dataset: "${BQ_DATASET}"
+      table: "${BQ_TABLE}"
       protobuf_path: "./protos"
       protobuf_name: com.Entity
       batching:
-        period: 1s
+        period: 10s
 
 input:
   # broker:
@@ -38,17 +38,18 @@ input:
   #   inputs:
   #     - resource: kafka_input
   generate:
-    count: 10
-    batch_size: 5
-    interval: "@every 1s"
+    count: 100000
+    # batch_size: 1000
+    interval: ""
     mapping: |
       let partition = random_int(min:0,max:9)
       root = {
         "key": {
-          "id": counter(min:5000)
+          "id": random_int(min:5000,max:10000),
         },
-        "name": fake("email"),
+        "name": fake("name"),
         "score": random_int(max:1000000),
+        "url": fake("url"),
         "metadata": {
           "partition": $partition,
           "offset": count($partition.string()),
@@ -67,4 +68,4 @@ output:
     pattern: fan_out_sequential
     outputs:
       - resource: bqwrite
-      - resource: stdout
+      # - resource: stdout

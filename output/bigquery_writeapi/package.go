@@ -36,9 +36,18 @@ func init() {
 		var dataset string
 		var table string
 
+		logger := mgr.Logger()
 		maxInFlight = 1
 		if policy, err = conf.FieldBatchPolicy("batching"); err != nil {
 			return
+		}
+		if policy.ByteSize == 0 {
+			logger.Warnf("batching.byte_size default value is 10485760 bytes (10MB)")
+			policy.ByteSize = 10485760
+		}
+		if policy.ByteSize > 10485760 {
+			logger.Warnf("batching.byte_size max value is 10485760 bytes (10MB)")
+			policy.ByteSize = 10485760
 		}
 		if project, err = conf.FieldString("project"); err != nil {
 			return
@@ -73,7 +82,7 @@ func init() {
 		}
 
 		out = &bqWriter{
-			log:                  mgr.Logger(),
+			log:                  logger,
 			project:              project,
 			dataset:              dataset,
 			table:                table,
@@ -153,17 +162,17 @@ func (b *bqWriter) WriteBatch(ctx context.Context, msgs service.MessageBatch) (e
 	/* ------------------------------ Encoding data ----------------------------- */
 	var row []byte
 	var rows = make([][]byte, 0, len(msgs))
-	b.log.Infof("Received msgs %v", len(msgs))
+	b.log.Infof("Received %v messages", len(msgs))
 	for _, msg := range msgs {
 		if row, err = messageToProtobuf(msg, b.protobufMessage, b.protobufTypes); err != nil {
 			return fmt.Errorf("messageToProtobuf call error: %w", err)
 		}
 		rows = append(rows, row)
 	}
-	b.log.Infof("Appending rows %v", rows)
 	/* ------------------------------ Writing data ------------------------------ */
 	var result *managedwriter.AppendResult
 	b.connMut.Lock()
+	b.log.Infof("Appending %v rows", len(rows))
 	result, err = b.stream.AppendRows(ctx, rows)
 	b.connMut.Unlock()
 	if err != nil {

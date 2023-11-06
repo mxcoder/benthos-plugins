@@ -13,4 +13,5 @@ message Entity {
     optional PK key = 2;
     optional string name = 3;
     optional uint32 score = 4;
+    optional string url = 5;
 }
