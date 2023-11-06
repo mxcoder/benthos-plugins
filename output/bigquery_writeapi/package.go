@@ -20,10 +20,16 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
+const (
+	maxWriteBatchSize  = 8388608 // 8MB
+	defaultMaxInFlight = 1
+)
+
 func init() {
 	configSpec := service.NewConfigSpec().
 		Summary("Writes to BigQuery using WriteAPI").
 		Field(service.NewBatchPolicyField("batching")).
+		Field(service.NewIntField("max_in_flight").Description("Max in-flight operations").Default(defaultMaxInFlight)).
 		Field(service.NewStringField("project").Description("GCP Project name")).
 		Field(service.NewStringField("dataset").Description("BigQuery dataset name")).
 		Field(service.NewStringField("table").Description("BigQuery table name")).
@@ -37,17 +43,19 @@ func init() {
 		var table string
 
 		logger := mgr.Logger()
-		maxInFlight = 1
+		if maxInFlight, err = conf.FieldInt("max_in_flight"); err != nil {
+			return
+		}
 		if policy, err = conf.FieldBatchPolicy("batching"); err != nil {
 			return
 		}
 		if policy.ByteSize == 0 {
-			logger.Warnf("batching.byte_size default value is 10485760 bytes (10MB)")
-			policy.ByteSize = 10485760
+			logger.Warnf("batching.byte_size default value is %d bytes", maxWriteBatchSize)
+			policy.ByteSize = maxWriteBatchSize
 		}
-		if policy.ByteSize > 10485760 {
-			logger.Warnf("batching.byte_size max value is 10485760 bytes (10MB)")
-			policy.ByteSize = 10485760
+		if policy.ByteSize > maxWriteBatchSize {
+			logger.Warnf("batching.byte_size default value is %d bytes", maxWriteBatchSize)
+			policy.ByteSize = maxWriteBatchSize
 		}
 		if project, err = conf.FieldString("project"); err != nil {
 			return
@@ -63,7 +71,8 @@ func init() {
 		var protobufMessageName string
 
 		if protobufPath, err = conf.FieldString("protobuf_path"); err != nil {
-			return
+			logger.Infof("using default protobuf_path of current directory")
+			protobufPath = "."
 		}
 		if protobufMessageName, err = conf.FieldString("protobuf_name"); err != nil || protobufMessageName == "" {
 			return nil, policy, maxInFlight, errors.New("protobuf_name is required and cannot be empty")
@@ -71,14 +80,17 @@ func init() {
 
 		var importPaths []string
 		importPaths = append(importPaths, protobufPath)
-		protobufMessageType, protobufTypes, err := protobuf.LoadMessage(mgr.FS(), protobufMessageName, importPaths)
+		_, protobufTypes, err := protobuf.LoadDescriptors(mgr.FS(), importPaths)
 		if err != nil {
-			return
+			return nil, policy, maxInFlight, fmt.Errorf("unable to load protobuf Descriptors from: %v", importPaths)
 		}
-
+		protobufMessageType, err := protobuf.LoadMessage(protobufTypes, protobufMessageName)
+		if err != nil {
+			return nil, policy, maxInFlight, fmt.Errorf("unable to load protobuf Message: %v", protobufMessageName)
+		}
 		normalizedDescriptor, err := adapt.NormalizeDescriptor(protobufMessageType.Descriptor())
 		if err != nil {
-			return
+			return nil, policy, maxInFlight, fmt.Errorf("unable to normalize protobuf Message: %v", protobufMessageName)
 		}
 
 		out = &bqWriter{

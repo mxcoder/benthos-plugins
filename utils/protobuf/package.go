@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 
 	"github.com/jhump/protoreflect/desc/protoparse"
+	"google.golang.org/protobuf/encoding/protojson"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
 	"google.golang.org/protobuf/types/dynamicpb"
@@ -23,7 +25,7 @@ func RegistriesFromMap(filesMap map[string]string) (*protoregistry.Files, *proto
 	}
 	fds, err := parser.ParseFiles(names...)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("failed to Parse protobuf files: %v", err)
 	}
 
 	files, types := &protoregistry.Files{}, &protoregistry.Types{}
@@ -33,7 +35,12 @@ func RegistriesFromMap(filesMap map[string]string) (*protoregistry.Files, *proto
 		}
 		for _, t := range v.GetMessageTypes() {
 			if err := types.RegisterMessage(dynamicpb.NewMessageType(t.UnwrapMessage())); err != nil {
-				return nil, nil, fmt.Errorf("failed to register type '%v': %w", t.GetName(), err)
+				return nil, nil, fmt.Errorf("failed to register type '%v': %w", t.GetFullyQualifiedName(), err)
+			}
+			for _, nt := range t.GetNestedMessageTypes() {
+				if err := types.RegisterMessage(dynamicpb.NewMessageType(nt.UnwrapMessage())); err != nil {
+					return nil, nil, fmt.Errorf("failed to register type '%v': %w", nt.GetFullyQualifiedName(), err)
+				}
 			}
 		}
 	}
@@ -44,8 +51,8 @@ func LoadDescriptors(fileSystem fs.FS, importPaths []string) (*protoregistry.Fil
 	files := map[string]string{}
 	for _, importPath := range importPaths {
 		if err := fs.WalkDir(fileSystem, importPath, func(path string, info fs.DirEntry, ferr error) error {
-			if ferr != nil || info.IsDir() {
-				return ferr
+			if ferr != nil {
+				return fmt.Errorf("failed to walkDir: %v", ferr)
 			}
 			if filepath.Ext(info.Name()) == ".proto" {
 				rPath, ferr := filepath.Rel(importPath, path)
@@ -60,22 +67,30 @@ func LoadDescriptors(fileSystem fs.FS, importPaths []string) (*protoregistry.Fil
 			}
 			return nil
 		}); err != nil {
-			return nil, nil, err
+			return nil, nil, fmt.Errorf("failed to get walk path: %v", err)
 		}
 	}
 	return RegistriesFromMap(files)
 }
 
-func LoadMessage(fileSystem fs.FS, messageName string, importPaths []string) (messageType protoreflect.MessageType, types *protoregistry.Types, err error) {
+func LoadMessage(types *protoregistry.Types, messageName string) (messageType protoreflect.MessageType, err error) {
 	if messageName == "" {
-		return nil, nil, errors.New("messageName must not be empty")
-	}
-	if _, types, err = LoadDescriptors(fileSystem, importPaths); err != nil {
-		return nil, nil, err
+		return nil, errors.New("messageName must not be empty")
 	}
 	types.RangeMessages(func(mt protoreflect.MessageType) bool { return true })
 	if messageType, err = types.FindMessageByName(protoreflect.FullName(messageName)); err != nil {
-		return nil, nil, fmt.Errorf("unable to find message '%v' definition within '%v'", messageName, importPaths)
+		return nil, fmt.Errorf("unable to find message '%v'", messageName)
 	}
-	return messageType, types, err
+	return messageType, err
+}
+
+func MessageToJSON(pb proto.Message) (out []byte, err error) {
+	out, err = protojson.MarshalOptions{
+		UseProtoNames:   true,
+		EmitUnpopulated: false,
+	}.Marshal(pb)
+	if err != nil {
+		return []byte(""), fmt.Errorf("cant encode proto.Message (%v) to JSON '%v'", pb, err)
+	}
+	return
 }

@@ -10,11 +10,13 @@ input:
       addresses: ["${KAFKA}"]
       topics: ["${TOPIC}"]
       consumer_group: "${GROUP}"
-    processors:
-      - protobuf_deserializer:
-          protodir: ./protos
-          valueMessage: com.Entity
-          keyMessage: com.Entity.PK
+      batching:
+        processors:
+          - protobuf_deserializer:
+              protobuf_path: ./protos
+              value_message: "${PROTO_VALUE}"
+              key_message: "${PROTO_KEY}"
+              clear_key: false
 ```
 
 ### Sink Formatter

@@ -1,0 +1,23 @@
+input:
+  read_until:
+    check: count("messages") >= 5
+    input:
+      kafka:
+        addresses: [${KAFKA_ADDRESS}]
+        topics: ["${KAFKA_TOPIC}"]
+        consumer_group: ""
+        batching:
+          count: 5
+          processors:
+            - protobuf_deserializer:
+                protobuf_path: ./protos
+                value_message: "${PROTO_VALUE}"
+                key_message: "${PROTO_KEY}"
+                clear_key: false
+
+pipeline:
+  threads: 1
+
+output:
+  stdout:
+    codec: lines
