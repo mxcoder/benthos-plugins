@@ -1,9 +1,15 @@
-package samples;
+syntax = "proto2";
+
+package com;
+option go_package = "com";
+
+import "kafka_metadata.proto";
 
 message Entity {
     message PK {
         optional uint32 id = 1;
     }
+    optional KafkaMetadata metadata = 1;
     optional PK key = 2;
     optional string name = 3;
     optional uint32 score = 4;

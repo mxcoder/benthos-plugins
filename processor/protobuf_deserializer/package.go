@@ -5,15 +5,15 @@ import (
 	"errors"
 	"log"
 
-	"github.com/Jeffail/benthos/v3/public/service"
-
-	"github.com/mxcoder/benthos-plugin/utils/protodef"
+	"github.com/benthosdev/benthos/v4/public/service"
 
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/dynamicpb"
+
+	"github.com/mxcoder/benthos-plugin/utils/protodef"
 )
 
 type protoMD protoreflect.MessageDescriptor

@@ -1,0 +1,11 @@
+syntax = "proto2";
+
+package com;
+option go_package = "com";
+
+message KafkaMetadata {
+    optional uint32 partition = 2;
+    optional uint32 offset = 3;
+    optional int64 timestamp = 4;
+    optional bool is_tombstone = 5;
+}

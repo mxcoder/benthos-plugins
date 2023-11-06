@@ -3,9 +3,17 @@ package main
 import (
 	"context"
 
-	_ "github.com/Jeffail/benthos/v3/public/components/all"
-	"github.com/Jeffail/benthos/v3/public/service"
+	"github.com/benthosdev/benthos/v4/public/service"
 
+	_ "github.com/benthosdev/benthos/v4/public/components/io"
+	_ "github.com/benthosdev/benthos/v4/public/components/kafka"
+	_ "github.com/benthosdev/benthos/v4/public/components/pure"
+	_ "github.com/benthosdev/benthos/v4/public/components/pure/extended"
+
+	// Import all standard Benthos components
+	// _ "github.com/benthosdev/benthos/v4/public/components/all"
+
+	_ "github.com/mxcoder/benthos-plugin/output/bigquery_writeapi"
 	_ "github.com/mxcoder/benthos-plugin/processor/protobuf_deserializer"
 	_ "github.com/mxcoder/benthos-plugin/processor/sink_formatter"
 )

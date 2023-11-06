@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Jeffail/benthos/v3/public/service"
+	"github.com/benthosdev/benthos/v4/public/service"
 )
 
 type jsonMap map[string]interface{}

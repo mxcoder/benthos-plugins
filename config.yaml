@@ -1,44 +1,70 @@
 logger:
   level: INFO
-  format: classic
+  format: logfmt
   add_timestamp: true
-  static_fields: {}
+  static_fields:
+    "@service": ""
 
-metrics:
-  http_server:
-    prefix: ""
-
-input_resources:
-  - label: kafka_input
-    kafka:
-      addresses: ["${KAFKA}"]
-      topics: ["${TOPIC}"]
-      consumer_group: "${GROUP}"
-    processors:
-      - protobuf_deserializer:
-          protodir: ./protos
-          protofile: entity.proto
-          valueMessage: Entity
-          keyMessage: PK
+# input_resources:
+#   - label: kafka_input
+#     kafka:
+#       addresses: ["${KAFKA}"]
+#       topics: ["${TOPIC}"]
+#       consumer_group: "${GROUP}"
+#     processors:
+#       - protobuf_deserializer:
+#           protodir: ./protos
+#           protofile: entity.proto
+#           valueMessage: Entity
+#           keyMessage: PK
 
 output_resources:
   - label: stdout
     stdout:
       codec: lines
+  - label: bqwrite
+    bqwrite:
+      project: "$BQ_PROJECT"
+      dataset: "$BQ_DATASET"
+      table: "$BQ_TABLE"
+      protobuf_path: "./protos"
+      protobuf_name: com.Entity
+      batching:
+        period: 1s
 
 input:
-  broker:
-    copies: 1
-    inputs:
-      - resource: kafka_input
+  # broker:
+  #   copies: 1
+  #   inputs:
+  #     - resource: kafka_input
+  generate:
+    count: 10
+    batch_size: 5
+    interval: "@every 1s"
+    mapping: |
+      let partition = random_int(min:0,max:9)
+      root = {
+        "key": {
+          "id": counter(min:5000)
+        },
+        "name": fake("email"),
+        "score": random_int(max:1000000),
+        "metadata": {
+          "partition": $partition,
+          "offset": count($partition.string()),
+          "timestamp": timestamp_unix_micro().int64(),
+          "is_tombstone": random_int(min:0,max:1).bool()
+        }
+      }
 
 pipeline:
   threads: 1
-  processors:
-  - sink_formatter: {}
+  # processors:
+  #   - sink_formatter: {}
 
 output:
   broker:
-    pattern: fan_out
+    pattern: fan_out_sequential
     outputs:
+      - resource: bqwrite
       - resource: stdout
