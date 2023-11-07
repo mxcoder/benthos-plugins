@@ -1,44 +1,47 @@
 logger:
   level: INFO
 
+metrics:
+  prometheus: {}
+
 input:
-  read_until:
-    check: count("messages") >= 5
-    input:
-      kafka:
-        addresses: [${KAFKA_ADDRESS}]
-        topics: ["${KAFKA_TOPIC}"]
-        consumer_group: ""
-        start_from_oldest: true
-        batching:
-          period: 2s
-          byte_size: 8388608
-          processors:
-            - protobuf_deserializer:
-                protobuf_path: ./protos
-                value_message: "${PROTO_VALUE}"
-                key_message: "${PROTO_KEY}"
-                clear_key: false
+  kafka:
+    addresses: [${KAFKA_ADDRESS}]
+    topics: ["${KAFKA_TOPIC}"]
+    consumer_group: ""
+    start_from_oldest: true
+    batching:
+      period: 2s
+      processors:
+        - kafka_protobuf_deserializer:
+            import_paths: [./protos]
+            key_message: "${PROTO_KEY}"
+            value_message: "${PROTO_VALUE}"
 
 pipeline:
-  threads: 0
+  threads: 5
   processors:
     - mapping: |
-        root = this
+        #!blobl
+        root = {}
+        root.data = this
         root.metadata.offset = meta("kafka_offset").number()
         root.metadata.partition = meta("kafka_partition").number()
         root.metadata.timestamp = meta("kafka_timestamp_unix").number() * 1000 * 1000
         root.metadata.is_tombstone = meta("kafka_tombstone_message").bool()
+    - protobuf:
+        operator: from_json
+        import_paths: [./protos]
+        message: "${PROTO_VALUE}_WithMetadata"
 
 output:
-  # stdout:
-  #   codec: lines
-  bqwrite:
+  gcp_bigquery_writeapi:
     project: "${BQ_PROJECT}"
     dataset: "${BQ_DATASET}"
     table: "${BQ_TABLE}"
-    protobuf_path: "./protos"
-    protobuf_name: "${PROTO_VALUE}"
     max_in_flight: 5
+    serialize: false
+    import_paths: [./protos]
+    message: "${PROTO_VALUE}_WithMetadata"
     batching:
-      period: 2s
+      period: 5s

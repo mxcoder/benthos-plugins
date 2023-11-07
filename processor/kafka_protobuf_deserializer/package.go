@@ -1,4 +1,4 @@
-package protobuf_deserializer
+package kafka_protobuf_deserializer
 
 import (
 	"context"
@@ -12,44 +12,44 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
+const (
+	fieldImportPaths  = "import_paths"
+	fieldKeyMessage   = "key_message"
+	fieldValueMessage = "value_message"
+	defaultKeyMessage = "PK"
+	metaKafkaKey      = "kafka_key"
+)
+
 func init() {
 	configSpec := service.NewConfigSpec().
-		Summary("Deserializes data with the specified key and value FQN protobuf messages").
-		Field(service.NewStringField("protobuf_path").
-			Description("Directory of proto files").
-			Default("./protos")).
-		Field(service.NewStringField("value_message").
-			Description("Name of the protobuf Message for the main payload")).
-		Field(service.NewStringField("key_message").
+		Field(service.NewStringListField(fieldImportPaths).
+			Description("A list of directories containing .proto files, including all definitions required for parsing the target message. If left empty the current directory is used. Each directory listed will be walked with all found .proto files imported.").
+			Default([]string{})).
+		Field(service.NewStringField(fieldValueMessage).
+			Description("Name of the protobuf Message for the kafka value")).
+		Field(service.NewStringField(fieldKeyMessage).
 			Description("Name of the protobuf Message for the kafka key").
-			Default("PK")).
-		Field(service.NewBoolField("clear_key").
-			Description("Removes the key field from the resulting JSON").
-			Default(false))
+			Default(defaultKeyMessage)).
+		Summary("Deserializes data with the specified key and value FQN protobuf messages")
 
 	constructor := func(conf *service.ParsedConfig, mgr *service.Resources) (proc service.Processor, err error) {
-		logger := mgr.Logger()
-		var protobufPath string
 		var valueMessageName string
 		var keyMessageName string
-		var clearKey bool
-		if protobufPath, err = conf.FieldString("protobuf_path"); err != nil {
+		var includeKafkaMetadata bool
+
+		var importPaths []string
+		if importPaths, err = conf.FieldStringList(fieldImportPaths); err != nil {
 			return nil, err
 		}
-		if valueMessageName, err = conf.FieldString("value_message"); err != nil {
+		if valueMessageName, err = conf.FieldString(fieldValueMessage); err != nil {
 			return nil, err
 		}
-		if keyMessageName, err = conf.FieldString("key_message"); err != nil {
-			return nil, err
-		}
-		if clearKey, err = conf.FieldBool("clear_key"); err != nil {
+		if keyMessageName, err = conf.FieldString(fieldKeyMessage); err != nil {
 			return nil, err
 		}
 
-		var importPaths []string
 		var valueMessage protoreflect.MessageType
 		var keyMessage protoreflect.MessageType
-		importPaths = append(importPaths, protobufPath)
 		_, protobufTypes, err := protobuf.LoadDescriptors(mgr.FS(), importPaths)
 		if err != nil {
 			return nil, fmt.Errorf("unable to load protobuf Descriptors from: %v; %v", importPaths, err)
@@ -61,15 +61,15 @@ func init() {
 			return nil, fmt.Errorf("unable to find key protobuf message: %v", keyMessageName)
 		}
 		proc = &deserializerProcessor{
-			logger:         logger,
-			clearKey:       clearKey,
-			valMessageDesc: valueMessage.Descriptor(),
-			keyMessageDesc: keyMessage.Descriptor(),
+			includeKafkaMetadata: includeKafkaMetadata,
+			logger:               mgr.Logger(),
+			keyMessageDesc:       keyMessage.Descriptor(),
+			valMessageDesc:       valueMessage.Descriptor(),
 		}
 		return
 	}
 
-	err := service.RegisterProcessor("protobuf_deserializer", configSpec, constructor)
+	err := service.RegisterProcessor("kafka_protobuf_deserializer", configSpec, constructor)
 	if err != nil {
 		panic(err)
 	}
@@ -77,16 +77,16 @@ func init() {
 
 // ------------------------------------------------------------------------------
 type deserializerProcessor struct {
-	logger         *service.Logger
-	clearKey       bool
-	valMessageDesc protoreflect.MessageDescriptor
-	keyMessageDesc protoreflect.MessageDescriptor
+	includeKafkaMetadata bool
+	logger               *service.Logger
+	keyMessageDesc       protoreflect.MessageDescriptor
+	valMessageDesc       protoreflect.MessageDescriptor
 }
 
 func (p *deserializerProcessor) Process(ctx context.Context, m *service.Message) (service.MessageBatch, error) {
 	// Read kafka key from metadata, skip if not available
-	keyContent, keyFound := m.MetaGet("kafka_key")
-	if !keyFound {
+	keyContent, found := m.MetaGet(metaKafkaKey)
+	if !found {
 		return nil, errors.New("kafka message without key")
 	}
 	// Read main payload (value) bytes
@@ -107,11 +107,6 @@ func (p *deserializerProcessor) Process(ctx context.Context, m *service.Message)
 		return nil, errors.New("value deserialize error")
 	}
 
-	// Clear the key field from value
-	if p.clearKey {
-		pbValMessage.Clear(p.valMessageDesc.Fields().ByName("key"))
-	}
-
 	// Pass the bytes data as JSON
 	var jsonData []byte
 	if jsonData, err = protobuf.MessageToJSON(pbValMessage); err != nil {
@@ -123,7 +118,7 @@ func (p *deserializerProcessor) Process(ctx context.Context, m *service.Message)
 	if jsonData, err = protobuf.MessageToJSON(pbKeyMessage); err != nil {
 		return nil, fmt.Errorf("unable to marshal key message to JSON '%v'", err)
 	}
-	m.MetaSet("kafka_key", string(jsonData))
+	m.MetaSet(metaKafkaKey, string(jsonData))
 
 	return []*service.Message{m}, nil
 }

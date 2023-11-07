@@ -2,7 +2,6 @@ package bigquery_writeapi
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 
@@ -21,20 +20,41 @@ import (
 )
 
 const (
-	maxWriteBatchSize  = 8388608 // 8MB
+	fieldBatching      = "batching"
+	fieldMaxInFlight   = "max_in_flight"
+	fieldProject       = "project"
+	fieldDataset       = "dataset"
+	fieldTable         = "table"
+	fieldImportPaths   = "import_paths"
+	fieldMessage       = "message"
+	fieldSerialize     = "serialize"
 	defaultMaxInFlight = 1
+	outputName         = "gcp_bigquery_writeapi"
+	maxWriteBatchSize  = 8388608 // 8MB
 )
 
 func init() {
 	configSpec := service.NewConfigSpec().
 		Summary("Writes to BigQuery using WriteAPI").
-		Field(service.NewBatchPolicyField("batching")).
-		Field(service.NewIntField("max_in_flight").Description("Max in-flight operations").Default(defaultMaxInFlight)).
-		Field(service.NewStringField("project").Description("GCP Project name")).
-		Field(service.NewStringField("dataset").Description("BigQuery dataset name")).
-		Field(service.NewStringField("table").Description("BigQuery table name")).
-		Field(service.NewStringField("protobuf_path").Description("Protobuf search path")).
-		Field(service.NewStringField("protobuf_name").Description("Protobuf message name"))
+		Field(service.NewBatchPolicyField(fieldBatching)).
+		Field(service.NewIntField(fieldMaxInFlight).
+			Description("Max in-flight operations").
+			Default(defaultMaxInFlight)).
+		Field(service.NewStringField(fieldProject).
+			Description("GCP Project name")).
+		Field(service.NewStringField(fieldDataset).
+			Description("BigQuery dataset name")).
+		Field(service.NewStringField(fieldTable).
+			Description("BigQuery table name")).
+		Field(service.NewBoolField(fieldSerialize).
+			Description("Toggles data serialization").
+			Default(false)).
+		Field(service.NewStringListField(fieldImportPaths).
+			Description("A list of directories containing .proto files, including all definitions required for parsing the target message. If left empty the current directory is used. Each directory listed will be walked with all found .proto files imported.").
+			Default([]string{})).
+		Field(service.NewStringField(fieldMessage).
+			Description("Protobuf message name").
+			Default(""))
 
 	constructor := func(conf *service.ParsedConfig, mgr *service.Resources) (
 		out service.BatchOutput, policy service.BatchPolicy, maxInFlight int, err error) {
@@ -42,44 +62,40 @@ func init() {
 		var dataset string
 		var table string
 
-		logger := mgr.Logger()
-		if maxInFlight, err = conf.FieldInt("max_in_flight"); err != nil {
+		logger := mgr.Logger().With(map[string]string{"output": outputName})
+		if maxInFlight, err = conf.FieldInt(fieldMaxInFlight); err != nil {
 			return
 		}
-		if policy, err = conf.FieldBatchPolicy("batching"); err != nil {
+		if policy, err = conf.FieldBatchPolicy(fieldBatching); err != nil {
 			return
 		}
-		if policy.ByteSize == 0 {
+		if policy.ByteSize == 0 || policy.ByteSize > maxWriteBatchSize {
 			logger.Warnf("batching.byte_size default value is %d bytes", maxWriteBatchSize)
 			policy.ByteSize = maxWriteBatchSize
 		}
-		if policy.ByteSize > maxWriteBatchSize {
-			logger.Warnf("batching.byte_size default value is %d bytes", maxWriteBatchSize)
-			policy.ByteSize = maxWriteBatchSize
-		}
-		if project, err = conf.FieldString("project"); err != nil {
+		if project, err = conf.FieldString(fieldProject); err != nil {
 			return
 		}
-		if dataset, err = conf.FieldString("dataset"); err != nil {
+		if dataset, err = conf.FieldString(fieldDataset); err != nil {
 			return
 		}
-		if table, err = conf.FieldString("table"); err != nil {
+		if table, err = conf.FieldString(fieldTable); err != nil {
 			return
 		}
 
-		var protobufPath string
+		var protobufSerialize bool
 		var protobufMessageName string
-
-		if protobufPath, err = conf.FieldString("protobuf_path"); err != nil {
-			logger.Infof("using default protobuf_path of current directory")
-			protobufPath = "."
-		}
-		if protobufMessageName, err = conf.FieldString("protobuf_name"); err != nil || protobufMessageName == "" {
-			return nil, policy, maxInFlight, errors.New("protobuf_name is required and cannot be empty")
-		}
-
 		var importPaths []string
-		importPaths = append(importPaths, protobufPath)
+		if importPaths, err = conf.FieldStringList(fieldImportPaths); err != nil {
+			return nil, policy, maxInFlight, err
+		}
+		if protobufMessageName, err = conf.FieldString(fieldMessage); err != nil {
+			return nil, policy, maxInFlight, err
+		}
+		if protobufSerialize, err = conf.FieldBool(fieldSerialize); err != nil {
+			return nil, policy, maxInFlight, err
+		}
+
 		_, protobufTypes, err := protobuf.LoadDescriptors(mgr.FS(), importPaths)
 		if err != nil {
 			return nil, policy, maxInFlight, fmt.Errorf("unable to load protobuf Descriptors from: %v", importPaths)
@@ -100,12 +116,13 @@ func init() {
 			table:                table,
 			protobufTypes:        protobufTypes,
 			protobufMessage:      protobufMessageType,
+			protobufSerialize:    protobufSerialize,
 			normalizedDescriptor: normalizedDescriptor,
 		}
 		return
 	}
 
-	err := service.RegisterBatchOutput("bqwrite", configSpec, constructor)
+	err := service.RegisterBatchOutput(outputName, configSpec, constructor)
 	if err != nil {
 		panic(err)
 	}
@@ -122,6 +139,7 @@ type bqWriter struct {
 	stream               *managedwriter.ManagedStream
 	protobufTypes        *protoregistry.Types
 	protobufMessage      protoreflect.MessageType
+	protobufSerialize    bool
 	normalizedDescriptor *descriptorpb.DescriptorProto
 }
 
@@ -176,8 +194,14 @@ func (b *bqWriter) WriteBatch(ctx context.Context, msgs service.MessageBatch) (e
 	var rows = make([][]byte, 0, len(msgs))
 	b.log.Infof("Received %v messages", len(msgs))
 	for _, msg := range msgs {
-		if row, err = messageToProtobuf(msg, b.protobufMessage, b.protobufTypes); err != nil {
-			return fmt.Errorf("messageToProtobuf call error: %w", err)
+		if b.protobufSerialize {
+			if row, err = messageToProtobuf(msg, b.protobufMessage, b.protobufTypes); err != nil {
+				return fmt.Errorf("error serializing message: %w", err)
+			}
+		} else {
+			if row, err = msg.AsBytes(); err != nil {
+				return fmt.Errorf("error passing message bytes: %w", err)
+			}
 		}
 		rows = append(rows, row)
 	}
