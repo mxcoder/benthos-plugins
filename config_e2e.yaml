@@ -13,6 +13,7 @@ input:
     batching:
       period: 2s
       processors:
+        - mapping: root = this
         - kafka_protobuf_deserializer:
             import_paths: [./protos]
             key_message: "${PROTO_KEY}"

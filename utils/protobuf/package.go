@@ -51,7 +51,7 @@ func LoadDescriptors(fileSystem fs.FS, importPaths []string) (*protoregistry.Fil
 	files := map[string]string{}
 	for _, importPath := range importPaths {
 		if err := fs.WalkDir(fileSystem, importPath, func(path string, info fs.DirEntry, ferr error) error {
-			if ferr != nil {
+			if ferr != nil || info.IsDir() {
 				return fmt.Errorf("failed to walkDir: %v", ferr)
 			}
 			if filepath.Ext(info.Name()) == ".proto" {

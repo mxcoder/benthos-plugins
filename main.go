@@ -14,9 +14,9 @@ import (
 	// Import all standard Benthos components
 	// _ "github.com/benthosdev/benthos/v4/public/components/all"
 
-	_ "github.com/mxcoder/benthos-plugin/output/bigquery_writeapi"
+	// _ "github.com/mxcoder/benthos-plugin/output/bigquery_writeapi"
 	_ "github.com/mxcoder/benthos-plugin/processor/kafka_protobuf_deserializer"
-	_ "github.com/mxcoder/benthos-plugin/processor/sink_formatter"
+	// _ "github.com/mxcoder/benthos-plugin/processor/sink_formatter"
 )
 
 func main() {
